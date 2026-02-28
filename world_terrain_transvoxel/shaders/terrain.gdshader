@@ -17,6 +17,15 @@ void vertex() {
 	v_dist = length(v_world_pos - CAMERA_POSITION_WORLD);
 }
 
+// Micro-detail noise for high-res look
+float detail_noise(vec3 p) {
+	vec3 p2 = p * 12.0;
+	float n = fract(sin(dot(p2, vec3(12.989, 78.233, 45.164))) * 43758.5453);
+	p2 *= 2.5;
+	n += fract(sin(dot(p2, vec3(12.989, 78.233, 45.164))) * 43758.5453) * 0.5;
+	return n / 1.5;
+}
+
 void fragment() {
 	// 1. Calculate triplanar weights
 	vec3 blending = abs(v_normal);
@@ -27,24 +36,26 @@ void fragment() {
 	float grass_weight = smoothstep(slope_threshold - slope_softness, slope_threshold + slope_softness, slope);
 	
 	// 3. Detail Fading: Reduce noise contrast at distance to mask LOD popping
-	// lod_dist_0 is around 64, so we fade starting at 40
 	float detail_fade = clamp((v_dist - 40.0) / 100.0, 0.0, 1.0);
 	
-	// 4. Procedural color variation
+	// 4. Base procedural "landscape" noise (Mid-freq)
 	float noise = fract(sin(dot(v_world_pos.xz, vec2(12.9898, 78.233))) * 43758.5453);
+	
+	// 5. Micro-detail pass (High-freq) - ONLY for close range
+	float m_noise = mix(detail_noise(v_world_pos), 0.5, detail_fade);
+	
 	vec3 base_color = mix(rock_color, grass_color, grass_weight);
 	
-	// Apply noise, but reduce it as we get further away to soften the look
-	base_color *= (0.9 + mix(0.1, 0.03, detail_fade) * noise);
+	// Mix in the noises. Micro-noise adds the "grit/dirt" feel.
+	base_color *= (0.8 + 0.2 * mix(noise, m_noise, 0.7));
 	
-	// 5. Subtle Ambient Occlusion based on slope (darker in crevices)
+	// 6. Subtle Ambient Occlusion based on slope (darker in crevices)
 	float ao = mix(0.7, 1.0, smoothstep(-0.2, 0.5, slope));
 	ALBEDO = base_color * ao;
 	
-	// 6. Normal Softening: Mix actual normal with a smoothed "Up" normal at extreme distance
-	// This helps shadows stay stable on low-res distant mountains
+	// 7. Normal Softening: Mix actual normal with a smoothed "Up" normal at extreme distance
 	vec3 final_normal = normalize(v_normal);
 	NORMAL = mix(final_normal, vec3(0, 1, 0), detail_fade * 0.2);
 	
-	ROUGHNESS = mix(0.8, 1.0, detail_fade);
+	ROUGHNESS = mix(0.85, 0.95, m_noise * (1.0 - detail_fade));
 }

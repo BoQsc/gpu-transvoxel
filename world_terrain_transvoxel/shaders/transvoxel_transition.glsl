@@ -59,9 +59,15 @@ float get_density(ivec3 p) {
 }
 
 vec3 get_normal(ivec3 p) {
+    // Smoothed Normal: Multi-radius sampling for organic lighting
     float dx = get_density(p + ivec3(1,0,0)) - get_density(p - ivec3(1,0,0));
     float dy = get_density(p + ivec3(0,1,0)) - get_density(p - ivec3(0,1,0));
     float dz = get_density(p + ivec3(0,0,1)) - get_density(p - ivec3(0,0,1));
+    
+    dx += (get_density(p + ivec3(2,0,0)) - get_density(p - ivec3(2,0,0))) * 0.5;
+    dy += (get_density(p + ivec3(0,2,0)) - get_density(p - ivec3(0,2,0))) * 0.5;
+    dz += (get_density(p + ivec3(0,0,2)) - get_density(p - ivec3(0,0,2))) * 0.5;
+
     vec3 n = vec3(dx, dy, dz);
     float l = length(n);
     if (l < 0.0001) return vec3(0, 1, 0);
