@@ -26,49 +26,43 @@ const ivec3 corners[8] = {
 
 float get_density(ivec3 p) {
     int s = params.size;
+    // Buffer includes 1-voxel padding on both sides
     ivec3 pc = clamp(p, ivec3(0), ivec3(s - 1));
     return density.data[pc.x + pc.y * s + pc.z * s * s];
 }
 
 vec3 get_normal(ivec3 p) {
-    int s = params.size;
-    // Centered difference with clamping
+    // Pure centered difference: (p+1) - (p-1)
+    // p is already shifted by +1 into the 1..33 range
     float dx = get_density(p + ivec3(1,0,0)) - get_density(p - ivec3(1,0,0));
     float dy = get_density(p + ivec3(0,1,0)) - get_density(p - ivec3(0,1,0));
     float dz = get_density(p + ivec3(0,0,1)) - get_density(p - ivec3(0,0,1));
     
-    // Boundary fix: if sampling the edge, use one-sided difference
-    if (p.x == 0) dx = (get_density(ivec3(1, p.y, p.z)) - get_density(p)) * 2.0;
-    if (p.x == s-1) dx = (get_density(p) - get_density(ivec3(s-2, p.y, p.z))) * 2.0;
-    if (p.y == 0) dy = (get_density(ivec3(p.x, 1, p.z)) - get_density(p)) * 2.0;
-    if (p.y == s-1) dy = (get_density(p) - get_density(ivec3(p.x, s-2, p.z))) * 2.0;
-    if (p.z == 0) dz = (get_density(ivec3(p.x, p.y, 1)) - get_density(p)) * 2.0;
-    if (p.z == s-1) dz = (get_density(p) - get_density(ivec3(p.x, p.y, s-2))) * 2.0;
-
     vec3 n = vec3(dx, dy, dz);
     float l = length(n);
     if (l < 0.0001) return vec3(0, 1, 0);
-    // Invert gradient for noise - y polarity (Positive = Solid)
-    // Positive gradient points TOWARDS higher density (Solid), so we invert for outward normal.
     return -n / l;
 }
 
-vec3 interpolate(vec3 p1, float d1, vec3 p2, float d2) {
+vec4 interpolate_data(vec3 p1, float d1, vec3 p2, float d2) {
     float diff = d2 - d1;
-    if (abs(diff) < 0.0001) return p1;
-    float t = (params.iso_level - d1) / diff;
-    return mix(p1, p2, clamp(t, 0.01, 0.99)); // Avoid perfect boundary snap artifacts
+    if (abs(diff) < 0.0001) return vec4(p1, 0.0);
+    float t = clamp((params.iso_level - d1) / diff, 0.0, 1.0);
+    return vec4(mix(p1, p2, t), t);
 }
 
 void main() {
     ivec3 id = ivec3(gl_GlobalInvocationID.xyz);
     int s = params.size;
-    if (id.x >= s - 1 || id.y >= s - 1 || id.z >= s - 1) return;
+    
+    // Chunk size is s - 3 (e.g. 32)
+    // We want to generate cells 0..31
+    if (id.x >= s - 3 || id.y >= s - 3 || id.z >= s - 3) return;
 
     float d[8];
     int case_index = 0;
     for (int i = 0; i < 8; i++) {
-        ivec3 p = id + corners[i];
+        ivec3 p = id + corners[i] + ivec3(1); // Map to 1..33 range
         d[i] = get_density(p);
         if (d[i] > params.iso_level) case_index |= (1 << i);
     }
@@ -82,7 +76,6 @@ void main() {
     int vert_count_cell = (counts >> 4) & 0x0F;
 
     uint cell_vertex_indices[16];
-    for(int i=0; i<16; i++) cell_vertex_indices[i] = 0;
 
     int vertex_info_start = case_index * 12;
 
@@ -91,13 +84,13 @@ void main() {
         int i1 = (info >> 4) & 0x0F;
         int i2 = info & 0x0F;
         
-        ivec3 p1_i = id + corners[i1];
-        ivec3 p2_i = id + corners[i2];
+        ivec3 p1_i = id + corners[i1] + ivec3(1);
+        ivec3 p2_i = id + corners[i2] + ivec3(1);
         
-        vec3 pos = interpolate(vec3(p1_i), d[i1], vec3(p2_i), d[i2]);
-        vec3 n1 = get_normal(p1_i);
-        vec3 n2 = get_normal(p2_i);
-        vec3 norm = normalize(mix(n1, n2, 0.5));
+        vec4 interp = interpolate_data(vec3(p1_i), d[i1], vec3(p2_i), d[i2]);
+        vec3 pos = interp.xyz - 1.0; // Subtract padding to align with (0,0,0)
+        float t = interp.w;
+        vec3 norm = normalize(mix(get_normal(p1_i), get_normal(p2_i), t));
 
         uint v_idx = atomicAdd(counter.vertex_count, 1);
         if (v_idx >= counter.max_v) return;
@@ -122,7 +115,6 @@ void main() {
         int i1_rel = regularCellData.data[idx_base + 1];
         int i2_rel = regularCellData.data[idx_base + 2];
         
-        // CCW winding for Godot
         indices.data[i_idx + 0] = cell_vertex_indices[i0_rel];
         indices.data[i_idx + 1] = cell_vertex_indices[i2_rel];
         indices.data[i_idx + 2] = cell_vertex_indices[i1_rel];

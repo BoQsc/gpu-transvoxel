@@ -1,3 +1,4 @@
 res://world_terrain_transvoxel/scripts/chunk.gd
 res://world_terrain_transvoxel/scripts/chunk_manager.gd
 res://world_terrain_transvoxel/scripts/transvoxel_data.gd
+res://world_terrain_transvoxel/shaders/terrain.gdshader

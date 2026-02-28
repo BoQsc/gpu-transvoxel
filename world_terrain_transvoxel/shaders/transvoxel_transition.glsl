@@ -20,26 +20,36 @@ layout(push_constant) uniform PushConstants {
 } params;
 
 // Map local 2D (u, v) on a face to 3D (x, y, z)
+// According to Transvoxel spec and my chunk_manager face IDs
 ivec3 get_pos_3d(int u, int v) {
-    int s = params.size - 1;
+    int s = params.size - 3; // Chunk boundary (e.g. 32)
     switch(params.face) {
-        case 0: return ivec3(s, v, u); // +X
-        case 1: return ivec3(0, u, v); // -X
-        case 2: return ivec3(u, s, v); // +Y
-        case 3: return ivec3(v, 0, u); // -Y
-        case 4: return ivec3(u, v, s); // +Z
-        case 5: return ivec3(v, u, 0); // -Z
+        case 0: return ivec3(s, v, u); // +X (maxX): (s, z, y) -> Wait, Lengyel says (s, v, u)
+        case 1: return ivec3(0, u, v); // -X (minX): (0, y, z)
+        case 2: return ivec3(u, s, v); // +Y (maxY): (x, s, z)
+        case 3: return ivec3(v, 0, u); // -Y (minY): (z, 0, x)
+        case 4: return ivec3(v, u, s); // +Z (maxZ): (y, x, s)
+        case 5: return ivec3(u, v, 0); // -Z (minZ): (x, y, 0)
     }
     return ivec3(0);
 }
 
+// Lengyel Paper correction for my face mapping:
+// Face +X (0): u=z, v=y -> (s, v, u) -> (s, y, z)
+// Face -X (1): u=y, v=z -> (0, u, v) -> (0, y, z)
+// Face +Y (2): u=x, v=z -> (u, s, v) -> (x, s, z)
+// Face -Y (3): u=z, v=x -> (v, 0, u) -> (z, 0, x)
+// Face +Z (4): u=y, v=x -> (v, u, s) -> (x, y, s)  <- Wait, this is y,x,s
+// Face -Z (5): u=x, v=y -> (u, v, 0) -> (x, y, 0)
+
 ivec3 corner_to_pos(int c, ivec2 base_uv) {
-    if (c < 9) return get_pos_3d(base_uv.x + (c % 3), base_uv.y + (c / 3));
-    if (c == 9) return get_pos_3d(base_uv.x + 0, base_uv.y + 0);
-    if (c == 10) return get_pos_3d(base_uv.x + 2, base_uv.y + 0);
-    if (c == 11) return get_pos_3d(base_uv.x + 0, base_uv.y + 2);
-    if (c == 12) return get_pos_3d(base_uv.x + 2, base_uv.y + 2);
-    return ivec3(0);
+    ivec3 p3d = ivec3(0);
+    if (c < 9) p3d = get_pos_3d(base_uv.x + (c % 3), base_uv.y + (c / 3));
+    else if (c == 9) p3d = get_pos_3d(base_uv.x + 0, base_uv.y + 0);
+    else if (c == 10) p3d = get_pos_3d(base_uv.x + 2, base_uv.y + 0);
+    else if (c == 11) p3d = get_pos_3d(base_uv.x + 0, base_uv.y + 2);
+    else if (c == 12) p3d = get_pos_3d(base_uv.x + 2, base_uv.y + 2);
+    return p3d + ivec3(1); // Shift into padded index range
 }
 
 float get_density(ivec3 p) {
@@ -49,36 +59,30 @@ float get_density(ivec3 p) {
 }
 
 vec3 get_normal(ivec3 p) {
-    int s = params.size;
     float dx = get_density(p + ivec3(1,0,0)) - get_density(p - ivec3(1,0,0));
     float dy = get_density(p + ivec3(0,1,0)) - get_density(p - ivec3(0,1,0));
     float dz = get_density(p + ivec3(0,0,1)) - get_density(p - ivec3(0,0,1));
-    
-    // Boundary fallback
-    if (p.x == 0) dx = (get_density(ivec3(1, p.y, p.z)) - get_density(p)) * 2.0;
-    if (p.x == s-1) dx = (get_density(p) - get_density(ivec3(s-2, p.y, p.z))) * 2.0;
-    if (p.y == 0) dy = (get_density(ivec3(p.x, 1, p.z)) - get_density(p)) * 2.0;
-    if (p.y == s-1) dy = (get_density(p) - get_density(ivec3(p.x, s-2, p.z))) * 2.0;
-    if (p.z == 0) dz = (get_density(ivec3(p.x, p.y, 1)) - get_density(p)) * 2.0;
-    if (p.z == s-1) dz = (get_density(p) - get_density(ivec3(p.x, p.y, s-2))) * 2.0;
-
     vec3 n = vec3(dx, dy, dz);
     float l = length(n);
     if (l < 0.0001) return vec3(0, 1, 0);
     return -n / l;
 }
 
-vec3 interpolate(vec3 p1, float d1, vec3 p2, float d2) {
+vec4 interpolate_data(vec3 p1, float d1, vec3 p2, float d2) {
     float diff = d2 - d1;
-    if (abs(diff) < 0.0001) return p1;
-    float t = (params.iso_level - d1) / diff;
-    return mix(p1, p2, clamp(t, 0.01, 0.99));
+    if (abs(diff) < 0.0001) return vec4(p1, 0.0);
+    float t = clamp((params.iso_level - d1) / diff, 0.0, 1.0);
+    return vec4(mix(p1, p2, t), t);
 }
 
 void main() {
-    ivec2 base_uv = ivec2(gl_GlobalInvocationID.xy) * 2;
-    int s = params.size;
-    if (base_uv.x >= s - 2 || base_uv.y >= s - 2) return;
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+    int chunk_size = params.size - 3;
+    int num_cells = chunk_size / 2;
+    
+    if (id.x >= num_cells || id.y >= num_cells) return;
+    
+    ivec2 base_uv = id * 2;
 
     float d[13];
     int case_index = 0;
@@ -102,22 +106,35 @@ void main() {
     int vert_count_cell = (counts >> 4) & 0x0F;
 
     uint cell_vertex_indices[16];
-    for(int i=0; i<16; i++) cell_vertex_indices[i] = 0;
 
     int vertex_info_start = case_index * 12;
 
+    vec3 face_normal;
+    switch(params.face) {
+        case 0: face_normal = vec3(1,0,0); break;
+        case 1: face_normal = vec3(-1,0,0); break;
+        case 2: face_normal = vec3(0,1,0); break;
+        case 3: face_normal = vec3(0,-1,0); break;
+        case 4: face_normal = vec3(0,0,1); break;
+        case 5: face_normal = vec3(0,0,-1); break;
+    }
+
     for (int i = 0; i < vert_count_cell; i++) {
         int info = transitionVertexData.data[vertex_info_start + i];
-        int i2 = info & 0x0F;
         int i1 = (info >> 4) & 0x0F;
+        int i2 = info & 0x0F;
         
         ivec3 p1_i = corner_to_pos(i1, base_uv);
         ivec3 p2_i = corner_to_pos(i2, base_uv);
         
-        vec3 pos = interpolate(vec3(p1_i), d[i1], vec3(p2_i), d[i2]);
-        vec3 n1 = get_normal(p1_i);
-        vec3 n2 = get_normal(p2_i);
-        vec3 norm = normalize(mix(n1, n2, 0.5));
+        vec4 interp = interpolate_data(vec3(p1_i), d[i1], vec3(p2_i), d[i2]);
+        vec3 pos = interp.xyz - 1.0; 
+        
+        // Add tiny Z-bias to transition mesh to prevent blinking
+        pos += face_normal * 0.005;
+        
+        float t = interp.w;
+        vec3 norm = normalize(mix(get_normal(p1_i), get_normal(p2_i), t));
 
         uint v_idx = atomicAdd(counter.vertex_count, 1);
         if (v_idx >= counter.max_v) return;
@@ -138,19 +155,18 @@ void main() {
         if (i_idx + 2 >= counter.max_i) return;
 
         int idx_base = data_start + 1 + i * 3;
-        uint i0 = cell_vertex_indices[transitionCellData.data[idx_base + 0]];
-        uint i1 = cell_vertex_indices[transitionCellData.data[idx_base + 1]];
-        uint i2 = cell_vertex_indices[transitionCellData.data[idx_base + 2]];
+        uint v0 = cell_vertex_indices[transitionCellData.data[idx_base + 0]];
+        uint v1 = cell_vertex_indices[transitionCellData.data[idx_base + 1]];
+        uint v2 = cell_vertex_indices[transitionCellData.data[idx_base + 2]];
         
-        // Final winding alignment for Godot (CCW)
         if (swap_winding) {
-            indices.data[i_idx + 0] = i0;
-            indices.data[i_idx + 1] = i1;
-            indices.data[i_idx + 2] = i2;
+            indices.data[i_idx + 0] = v0;
+            indices.data[i_idx + 1] = v1;
+            indices.data[i_idx + 2] = v2;
         } else {
-            indices.data[i_idx + 0] = i0;
-            indices.data[i_idx + 1] = i2;
-            indices.data[i_idx + 2] = i1;
+            indices.data[i_idx + 0] = v0;
+            indices.data[i_idx + 1] = v2;
+            indices.data[i_idx + 2] = v1;
         }
     }
 }

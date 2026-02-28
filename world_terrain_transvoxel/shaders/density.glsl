@@ -12,7 +12,7 @@ layout(set = 0, binding = 0, std430) buffer DensityBuffer {
 layout(push_constant) uniform PushConstants {
     vec4 offset_and_scale; // xyz=pos, w=scale
     int size;
-    float iso_level; // Will use 0.0
+    float iso_level;
     int pad1;
     int pad2;
 } params;
@@ -38,7 +38,10 @@ void main() {
     int s = params.size;
     if (id.x >= s || id.y >= s || id.z >= s) return;
 
-    vec3 world_pos = params.offset_and_scale.xyz + vec3(id);
+    // Standard Mapping:
+    // id=1 is world_pos = offset (chunk origin)
+    // id=size-2 is world_pos = offset + chunk_size
+    vec3 world_pos = params.offset_and_scale.xyz + (vec3(id) - 1.0);
     vec3 pos = world_pos * params.offset_and_scale.w;
 
     float noise_sum = 0.0;
@@ -49,10 +52,8 @@ void main() {
         amp *= 0.5;
         freq *= 2.0;
     }
-    noise_sum *= 15.0; // Total height scale
+    noise_sum *= 15.0;
     
-    // Traditional MC Polarity: d = noise - y
-    // Surface around Y = -15
     uint index = uint(id.x) + uint(id.y * s) + uint(id.z * s * s);
     density.data[index] = (noise_sum - 15.0) - world_pos.y;
 }
