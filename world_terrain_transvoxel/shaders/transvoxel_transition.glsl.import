@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://f4qbeaodhmdb"
+path="res://.godot/imported/transvoxel_transition.glsl-086c3d1eae6d13766f33f047ea4d29d1.res"
+
+[deps]
+
+source_file="res://world_terrain_transvoxel/shaders/transvoxel_transition.glsl"
+dest_files=["res://.godot/imported/transvoxel_transition.glsl-086c3d1eae6d13766f33f047ea4d29d1.res"]
+
+[params]
+

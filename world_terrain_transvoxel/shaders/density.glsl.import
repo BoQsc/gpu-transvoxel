@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://d3sn3k1b32nna"
+path="res://.godot/imported/density.glsl-a151cde8b7e8a8e1ebfd47eb7fd0e434.res"
+
+[deps]
+
+source_file="res://world_terrain_transvoxel/shaders/density.glsl"
+dest_files=["res://.godot/imported/density.glsl-a151cde8b7e8a8e1ebfd47eb7fd0e434.res"]
+
+[params]
+
