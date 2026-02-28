@@ -8,6 +8,7 @@ class_name TransvoxelChunkManager
 @export var lod_dist_0: float = 64.0
 @export var lod_dist_1: float = 128.0
 @export var lod_dist_2: float = 256.0
+@export var hysteresis: float = 10.0 # prevent flickering at boundary
 
 var chunks: Dictionary = {} # Vector3i -> TransvoxelChunk
 
@@ -165,10 +166,19 @@ func _update_chunks() -> void:
 			for z in range(-radius, radius + 1):
 				var pos = p_chunk + Vector3i(x, y, z)
 				var dist = (Vector3(pos) * chunk_size - player_pos).length()
+				var current_lod = chunks.get(pos, -1).lod if chunks.has(pos) else -1
+				
 				var lod = 0
 				if dist > lod_dist_2: lod = 3
 				elif dist > lod_dist_1: lod = 2
 				elif dist > lod_dist_0: lod = 1
+				
+				# Apply hysteresis if chunk already exists
+				if current_lod != -1 and lod > current_lod:
+					# Only allow LOD to "drop" (get lower res) if further than margin
+					var threshold = [lod_dist_0, lod_dist_1, lod_dist_2][lod-1]
+					if dist < threshold + hysteresis:
+						lod = current_lod
 				
 				active_chunks[pos] = lod
 				
