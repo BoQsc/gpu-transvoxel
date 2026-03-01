@@ -1,6 +1,8 @@
 #[compute]
 #version 450
 
+// transvoxel_transition.glsl - Technical Correctness & Seam Fix
+
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0, std430) buffer DensityBuffer { float data[]; } density;
@@ -10,46 +12,41 @@ layout(set = 0, binding = 3, std430) buffer CounterBuffer { uint vertex_count; u
 
 layout(set = 0, binding = 4, std430) readonly buffer TransitionCellClass { int data[]; } transitionCellClass;
 layout(set = 0, binding = 5, std430) readonly buffer TransitionCellData { int data[]; } transitionCellData;
-layout(set = 0, binding = 6, std430) readonly buffer TransitionVertexData { int data[]; } transitionVertexData;
+layout(set = 0, binding = 6, std430) readonly buffer TransitionCornerData { int data[]; } transitionCornerData;
+layout(set = 0, binding = 7, std430) readonly buffer TransitionVertexData { int data[]; } transitionVertexData;
 
 layout(push_constant) uniform PushConstants {
     int size;
     float iso_level;
-    int face; // 0:+X, 1:-X, 2:+Y, 3:-Y, 4:+Z, 5:-Z
+    int face; 
     int pad;
 } params;
 
-// Map local 2D (u, v) on a face to 3D (x, y, z)
-// According to Transvoxel spec and my chunk_manager face IDs
+// Map local 2D (u, v) on a face to 3D voxel coordinate
 ivec3 get_pos_3d(int u, int v) {
-    int s = params.size - 3; // Chunk boundary (e.g. 32)
+    int s = params.size - 3; 
     switch(params.face) {
-        case 0: return ivec3(s, v, u); // +X (maxX): (s, z, y) -> Wait, Lengyel says (s, v, u)
-        case 1: return ivec3(0, u, v); // -X (minX): (0, y, z)
-        case 2: return ivec3(u, s, v); // +Y (maxY): (x, s, z)
-        case 3: return ivec3(v, 0, u); // -Y (minY): (z, 0, x)
-        case 4: return ivec3(v, u, s); // +Z (maxZ): (y, x, s)
-        case 5: return ivec3(u, v, 0); // -Z (minZ): (x, y, 0)
+        case 0: return ivec3(s, v, u); // +X
+        case 1: return ivec3(0, u, v); // -X
+        case 2: return ivec3(u, s, v); // +Y
+        case 3: return ivec3(v, 0, u); // -Y
+        case 4: return ivec3(u, v, s); // +Z
+        case 5: return ivec3(u, v, 0); // -Z
     }
     return ivec3(0);
 }
 
-// Lengyel Paper correction for my face mapping:
-// Face +X (0): u=z, v=y -> (s, v, u) -> (s, y, z)
-// Face -X (1): u=y, v=z -> (0, u, v) -> (0, y, z)
-// Face +Y (2): u=x, v=z -> (u, s, v) -> (x, s, z)
-// Face -Y (3): u=z, v=x -> (v, 0, u) -> (z, 0, x)
-// Face +Z (4): u=y, v=x -> (v, u, s) -> (x, y, s)  <- Wait, this is y,x,s
-// Face -Z (5): u=x, v=y -> (u, v, 0) -> (x, y, 0)
-
+// Convert corner ID (0-12) to 3D voxel index with padding compensation
 ivec3 corner_to_pos(int c, ivec2 base_uv) {
     ivec3 p3d = ivec3(0);
+    // Transvoxel grid mapping: 0-8 are high-res 3x3, 9-12 are low-res corners
     if (c < 9) p3d = get_pos_3d(base_uv.x + (c % 3), base_uv.y + (c / 3));
     else if (c == 9) p3d = get_pos_3d(base_uv.x + 0, base_uv.y + 0);
     else if (c == 10) p3d = get_pos_3d(base_uv.x + 2, base_uv.y + 0);
     else if (c == 11) p3d = get_pos_3d(base_uv.x + 0, base_uv.y + 2);
     else if (c == 12) p3d = get_pos_3d(base_uv.x + 2, base_uv.y + 2);
-    return p3d + ivec3(1); // Shift into padded index range
+    
+    return p3d + ivec3(1); // Shift by 1 for padded density buffer indexing
 }
 
 float get_density(ivec3 p) {
@@ -59,11 +56,11 @@ float get_density(ivec3 p) {
 }
 
 vec3 get_normal(ivec3 p) {
-    // Smoothed Normal: Multi-radius sampling for organic lighting
     float dx = get_density(p + ivec3(1,0,0)) - get_density(p - ivec3(1,0,0));
     float dy = get_density(p + ivec3(0,1,0)) - get_density(p - ivec3(0,1,0));
     float dz = get_density(p + ivec3(0,0,1)) - get_density(p - ivec3(0,0,1));
     
+    // Smooth pass for organic lighting
     dx += (get_density(p + ivec3(2,0,0)) - get_density(p - ivec3(2,0,0))) * 0.5;
     dy += (get_density(p + ivec3(0,2,0)) - get_density(p - ivec3(0,2,0))) * 0.5;
     dz += (get_density(p + ivec3(0,0,2)) - get_density(p - ivec3(0,0,2))) * 0.5;
@@ -83,8 +80,8 @@ vec4 interpolate_data(vec3 p1, float d1, vec3 p2, float d2) {
 
 void main() {
     ivec2 id = ivec2(gl_GlobalInvocationID.xy);
-    int chunk_size = params.size - 3;
-    int num_cells = chunk_size / 2;
+    int chunk_size = params.size - 3; 
+    int num_cells = chunk_size / 2; 
     
     if (id.x >= num_cells || id.y >= num_cells) return;
     
@@ -98,6 +95,7 @@ void main() {
         if (d[i] > params.iso_level) case_index |= (1 << i);
     }
 
+    // Secondary nodes for the low-res side
     d[9] = d[0]; d[10] = d[2]; d[11] = d[6]; d[12] = d[8];
 
     if (case_index == 0 || case_index == 511) return;
@@ -111,8 +109,7 @@ void main() {
     int tri_count = counts & 0x0F;
     int vert_count_cell = (counts >> 4) & 0x0F;
 
-    uint cell_vertex_indices[16];
-
+    uint cell_vertex_indices[12];
     int vertex_info_start = case_index * 12;
 
     vec3 face_normal;
@@ -136,7 +133,7 @@ void main() {
         vec4 interp = interpolate_data(vec3(p1_i), d[i1], vec3(p2_i), d[i2]);
         vec3 pos = interp.xyz - 1.0; 
         
-        // Add tiny Z-bias to transition mesh to prevent blinking
+        // Z-bias to prevent Z-fighting with regular chunk
         pos += face_normal * 0.005;
         
         float t = interp.w;
