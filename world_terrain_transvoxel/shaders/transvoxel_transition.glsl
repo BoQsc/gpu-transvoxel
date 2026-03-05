@@ -22,16 +22,16 @@ layout(push_constant) uniform PushConstants {
     int pad;
 } params;
 
-// Map local 2D (u, v) on a face to 3D voxel coordinate
-ivec3 get_pos_3d(int u, int v) {
+// Map local 3D (u, v, z) on a face to full chunk 3D voxel coordinate
+ivec3 get_pos_3d(int u, int v, int local_z) {
     int s = params.size - 3; 
     switch(params.face) {
-        case 0: return ivec3(s, v, u); // +X
-        case 1: return ivec3(0, u, v); // -X
-        case 2: return ivec3(u, s, v); // +Y
-        case 3: return ivec3(v, 0, u); // -Y
-        case 4: return ivec3(u, v, s); // +Z
-        case 5: return ivec3(u, v, 0); // -Z
+        case 0: return ivec3(s - 1 + local_z, u, v); // +X
+        case 1: return ivec3(1 - local_z, v, u); // -X
+        case 2: return ivec3(v, s - 1 + local_z, u); // +Y
+        case 3: return ivec3(u, 1 - local_z, v); // -Y
+        case 4: return ivec3(u, v, s - 1 + local_z); // +Z
+        case 5: return ivec3(v, u, 1 - local_z); // -Z
     }
     return ivec3(0);
 }
@@ -39,12 +39,12 @@ ivec3 get_pos_3d(int u, int v) {
 // Convert corner ID (0-12) to 3D voxel index with padding compensation
 ivec3 corner_to_pos(int c, ivec2 base_uv) {
     ivec3 p3d = ivec3(0);
-    // Transvoxel grid mapping: 0-8 are high-res 3x3, 9-12 are low-res corners
-    if (c < 9) p3d = get_pos_3d(base_uv.x + (c % 3), base_uv.y + (c / 3));
-    else if (c == 9) p3d = get_pos_3d(base_uv.x + 0, base_uv.y + 0);
-    else if (c == 10) p3d = get_pos_3d(base_uv.x + 2, base_uv.y + 0);
-    else if (c == 11) p3d = get_pos_3d(base_uv.x + 0, base_uv.y + 2);
-    else if (c == 12) p3d = get_pos_3d(base_uv.x + 2, base_uv.y + 2);
+    // Transvoxel grid mapping: 0-8 are high-res 3x3 (local_z=0), 9-12 are low-res corners (local_z=1)
+    if (c < 9) p3d = get_pos_3d(base_uv.x + (c % 3), base_uv.y + (c / 3), 0);
+    else if (c == 9) p3d = get_pos_3d(base_uv.x + 0, base_uv.y + 0, 1);
+    else if (c == 10) p3d = get_pos_3d(base_uv.x + 2, base_uv.y + 0, 1);
+    else if (c == 11) p3d = get_pos_3d(base_uv.x + 0, base_uv.y + 2, 1);
+    else if (c == 12) p3d = get_pos_3d(base_uv.x + 2, base_uv.y + 2, 1);
     
     return p3d + ivec3(1); // Shift by 1 for padded density buffer indexing
 }
@@ -133,8 +133,7 @@ void main() {
         vec4 interp = interpolate_data(vec3(p1_i), d[i1], vec3(p2_i), d[i2]);
         vec3 pos = interp.xyz - 1.0; 
         
-        // Z-bias to prevent Z-fighting with regular chunk
-        pos += face_normal * 0.005;
+        // Z-bias removed - accurate coordinate mapping prevents z-fighting natively
         
         float t = interp.w;
         vec3 norm = normalize(mix(get_normal(p1_i), get_normal(p2_i), t));

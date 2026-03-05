@@ -63,6 +63,14 @@ void main() {
     // Chunk size is s - 3 (e.g. 32)
     // We want to generate cells 0..31
     if (id.x >= s - 3 || id.y >= s - 3 || id.z >= s - 3) return;
+    
+    // Mask out cells actively being replaced by a transition patch
+    if (((params.pad1 & (1 << 0)) != 0 && id.x == s - 4) ||
+        ((params.pad1 & (1 << 1)) != 0 && id.x == 0) ||
+        ((params.pad1 & (1 << 2)) != 0 && id.y == s - 4) ||
+        ((params.pad1 & (1 << 3)) != 0 && id.y == 0) ||
+        ((params.pad1 & (1 << 4)) != 0 && id.z == s - 4) ||
+        ((params.pad1 & (1 << 5)) != 0 && id.z == 0)) return;
 
     float d[8];
     int case_index = 0;

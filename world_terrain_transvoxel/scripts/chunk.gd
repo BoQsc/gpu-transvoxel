@@ -146,7 +146,13 @@ func _dispatch_regular(s: int) -> void:
 	push.resize(16)
 	push.encode_s32(0, s)
 	push.encode_float(4, 0.0) # iso_level 0.0
-	push.encode_s32(8, 0)
+	
+	var face_mask = 0
+	for i in range(6):
+		if neighbor_lods[i] > lod:
+			face_mask |= (1 << i)
+			
+	push.encode_s32(8, face_mask) # pass to pad1
 	push.encode_s32(12, 0)
 	
 	rd.compute_list_set_push_constant(compute_list, push, push.size())
